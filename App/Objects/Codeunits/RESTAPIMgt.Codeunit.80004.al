@@ -132,6 +132,75 @@ codeunit 79990 "BAAPI REST API Mgt."
 
 
     /// <summary>
+    /// Sends a request and parses the response body as a JsonObject. See TrySendRequest.
+    /// </summary>
+    procedure TrySendJsonRequest(Method: Text; URL: Text; ContentType: Text; RequestBody: Text; var RequestHeaderValues: Dictionary of [Text, Text]; var ResponseObj: JsonObject; var ResponseText: Text; var ErrorText: Text): Boolean
+    begin
+        Clear(ResponseObj);
+        if not TrySendRequest(Method, URL, ContentType, RequestBody, RequestHeaderValues, ResponseText, ErrorText) then
+            exit(false);
+        if not ResponseObj.ReadFrom(ResponseText) then begin
+            ErrorText := StrSubstNo(UnableToReadResponseErr, ResponseText);
+            exit(false);
+        end;
+        exit(true);
+    end;
+
+    /// <summary>
+    /// Sends a request and returns the raw response body. Prefer this over the HttpHeaders-based
+    /// overloads: request headers are taken as a Dictionary and applied straight to the request
+    /// message, so nothing is staged on caller-supplied HttpHeaders. Staging is unsafe, because two
+    /// staged HttpHeaders keep separate key lists but share a single value pool - GetValues then
+    /// returns another header's value, and BC rejects the request as an invalid HTTP header.
+    /// An empty RequestBody sends no content. Never raises; reports failure through ErrorText.
+    /// </summary>
+    procedure TrySendRequest(Method: Text; URL: Text; ContentType: Text; RequestBody: Text; var RequestHeaderValues: Dictionary of [Text, Text]; var ResponseText: Text; var ErrorText: Text): Boolean
+    var
+        Client: HttpClient;
+        Content: HttpContent;
+        RequestMsg: HttpRequestMessage;
+        ResponseMsg: HttpResponseMessage;
+        ContentHeaders: HttpHeaders;
+        RequestHeaders: HttpHeaders;
+        HeaderKey: Text;
+    begin
+        ErrorText := '';
+        ResponseText := '';
+        RequestMsg.SetRequestUri(URL);
+        RequestMsg.Method(Method);
+        RequestMsg.GetHeaders(RequestHeaders);
+        foreach HeaderKey in RequestHeaderValues.Keys() do begin
+            if RequestHeaders.Contains(HeaderKey) then
+                RequestHeaders.Remove(HeaderKey);
+            RequestHeaders.Add(HeaderKey, RequestHeaderValues.Get(HeaderKey));
+        end;
+        if RequestBody <> '' then begin
+            Content.WriteFrom(RequestBody);
+            // content headers must be set before the content is assigned to the request message:
+            // assigning copies the content, so anything added afterwards is dropped
+            Content.GetHeaders(ContentHeaders);
+            if ContentHeaders.Contains('Content-Type') then
+                ContentHeaders.Remove('Content-Type');
+            if ContentType <> '' then
+                ContentHeaders.Add('Content-Type', ContentType);
+            RequestMsg.Content(Content);
+        end;
+        if not Client.Send(RequestMsg, ResponseMsg) then begin
+            ErrorText := StrSubstNo(UnableToSendRequestMsg, GetLastErrorText());
+            exit(false);
+        end;
+        ResponseMsg.Content().ReadAs(ResponseText);
+        if not ResponseMsg.IsSuccessStatusCode() then begin
+            if ResponseText = '' then
+                ResponseText := StrSubstNo('%1 - %2', ResponseMsg.HttpStatusCode(), ResponseMsg.ReasonPhrase());
+            ErrorText := ResponseText;
+            exit(false);
+        end;
+        exit(true);
+    end;
+
+
+    /// <summary>
     /// Shared send-and-parse core. Never raises; reports failure through ErrorText.
     /// </summary>
     local procedure TrySendAndParse(Method: Text; URL: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders; var ResponseObj: JsonObject; var ResponseText: Text; var ErrorText: Text): Boolean
