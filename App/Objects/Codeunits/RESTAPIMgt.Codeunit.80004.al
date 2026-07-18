@@ -133,7 +133,7 @@ codeunit 79990 "BAAPI REST API Mgt."
             foreach HeaderKey in NewRequestHeaders.Keys() do begin
                 if RequestHeaders.Contains(HeaderKey) then
                     RequestHeaders.Remove(HeaderKey);
-                RequestHeaders.GetValues(HeaderKey, Values);
+                NewRequestHeaders.GetValues(HeaderKey, Values);
                 RequestHeaders.Add(HeaderKey, Values.Get(1));
             end;
         end;
@@ -145,7 +145,7 @@ codeunit 79990 "BAAPI REST API Mgt."
                 foreach HeaderKey in NewContentHeaders.Keys() do begin
                     if ContentHeaders.Contains(HeaderKey) then
                         ContentHeaders.Remove(HeaderKey);
-                    ContentHeaders.GetValues(HeaderKey, Values);
+                    NewContentHeaders.GetValues(HeaderKey, Values);
                     ContentHeaders.Add(HeaderKey, Values.Get(1));
                 end;
             end;
