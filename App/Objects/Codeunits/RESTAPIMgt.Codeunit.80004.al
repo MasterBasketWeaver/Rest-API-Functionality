@@ -3,11 +3,13 @@ codeunit 79990 "BAAPI REST API Mgt."
     procedure GetResponseAsJsonToken(Method: Text; URL: Text; TokenName: Text): Variant
     var
         JsonBody: JsonObject;
+        RequestHeaders: HttpHeaders;
+        ContentHeaders: HttpHeaders;
     begin
-        exit(GetResponseAsJsonToken(Method, URL, TokenName, JsonBody));
+        exit(GetResponseAsJsonToken(Method, URL, TokenName, JsonBody, RequestHeaders, ContentHeaders));
     end;
 
-    procedure GetResponseAsJsonToken(Method: Text; URL: Text; TokenName: Text; JsonBody: JsonObject): Variant
+    procedure GetResponseAsJsonToken(Method: Text; URL: Text; TokenName: Text; JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Variant
     var
         ResponseText: Text;
         JsonObj: JsonObject;
@@ -15,16 +17,16 @@ codeunit 79990 "BAAPI REST API Mgt."
         Sent: Boolean;
     begin
         if JsonBody.Keys.Count() > 0 then
-            Sent := SendRequestWithJsonBody(Method, URL, JsonBody, ResponseText)
+            Sent := SendRequestWithJsonBody(Method, URL, JsonBody, ResponseText, RequestHeaders, ContentHeaders)
         else
-            Sent := SendRequest(Method, URL, ResponseText);
+            Sent := SendRequest(Method, URL, ResponseText, RequestHeaders, ContentHeaders);
         if not Sent then
             Error(ResponseText);
         JsonObj.ReadFrom(ResponseText);
         if not JsonObj.Get(TokenName, JsonTkn) then begin
             JsonObj.WriteTo(ResponseText);
-            if ResponseText.Contains('"result":"error"') then
-                Error(ResponseText);
+            // if ResponseText.Contains('"result":"error"') then
+            //     Error(ResponseText);
             Error(TokenMisserErr, TokenName, ResponseText);
         end;
         exit(JsonTkn);
@@ -44,7 +46,16 @@ codeunit 79990 "BAAPI REST API Mgt."
         ResponseArray := GetResponseAsJsonArray(URL, TokenName, Method, JsonBody);
     end;
 
+
     procedure GetResponseAsJsonArray(URL: Text; TokenName: Text; Method: Text; var JsonBody: JsonObject): Variant
+    var
+        RequestHeaders: HttpHeaders;
+        ContentHeaders: HttpHeaders;
+    begin
+        exit(GetResponseAsJsonArray(URL, TokenName, Method, JsonBody, RequestHeaders, ContentHeaders));
+    end;
+
+    procedure GetResponseAsJsonArray(URL: Text; TokenName: Text; Method: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Variant
     var
         ResponseText: Text;
         JsonObj: JsonObject;
@@ -53,9 +64,9 @@ codeunit 79990 "BAAPI REST API Mgt."
         Result, Sent : Boolean;
     begin
         if JsonBody.Keys.Count() > 0 then
-            Sent := SendRequestWithJsonBody(Method, URL, JsonBody, ResponseText)
+            Sent := SendRequestWithJsonBody(Method, URL, JsonBody, ResponseText, RequestHeaders, ContentHeaders)
         else
-            Sent := SendRequest(Method, URL, ResponseText);
+            Sent := SendRequest(Method, URL, ResponseText, RequestHeaders, ContentHeaders);
         if not Sent then
             Error(ResponseText);
 
@@ -72,42 +83,76 @@ codeunit 79990 "BAAPI REST API Mgt."
 
     local procedure SendRequestWithJsonBody(Method: Text; URL: Text; var JsonObj: JsonObject; var ResponseText: Text): Boolean
     var
+        RequestHeaders: HttpHeaders;
+        ContentHeaders: HttpHeaders;
+    begin
+        exit(SendRequestWithJsonBody(Method, URL, JsonObj, ResponseText, RequestHeaders, ContentHeaders));
+    end;
+
+    local procedure SendRequestWithJsonBody(Method: Text; URL: Text; var JsonObj: JsonObject; var ResponseText: Text; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Boolean
+    var
         Content: HttpContent;
         s: Text;
     begin
         JsonObj.WriteTo(s);
         Content.WriteFrom(s);
-        exit(SendRequest(Method, URL, ResponseText, Content, StrLen(s)));
+        exit(SendRequest(Method, URL, ResponseText, Content, StrLen(s), RequestHeaders, ContentHeaders));
     end;
 
     local procedure SendRequest(Method: Text; URL: Text; var ResponseText: Text): Boolean
     var
         Content: HttpContent;
+        RequestHeaders: HttpHeaders;
+        ContentHeaders: HttpHeaders;
     begin
-        exit(SendRequest(Method, URL, ResponseText, Content, 0));
+        exit(SendRequest(Method, URL, ResponseText, Content, 0, RequestHeaders, ContentHeaders));
     end;
 
-    local procedure SendRequest(Method: Text; URL: Text; var ResponseText: Text; var Content: HttpContent; ContentLength: Integer): Boolean
+    local procedure SendRequest(Method: Text; URL: Text; var ResponseText: Text; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Boolean
+    var
+        Content: HttpContent;
+    begin
+        exit(SendRequest(Method, URL, ResponseText, Content, 0, RequestHeaders, ContentHeaders));
+    end;
+
+    local procedure SendRequest(Method: Text; URL: Text; var ResponseText: Text; var Content: HttpContent; ContentLength: Integer; var NewRequestHeaders: HttpHeaders; var NewContentHeaders: HttpHeaders): Boolean
     var
         HttpClient: HttpClient;
-        Headers: HttpHeaders;
         HttpRequestMessage: HttpRequestMessage;
         HttpResponseMessage: HttpResponseMessage;
+        RequestHeaders: HttpHeaders;
+        ContentHeaders: HttpHeaders;
+        Values: List of [Text];
+        HeaderKey: Text;
     begin
         HttpRequestMessage.SetRequestUri(URL);
         HttpRequestMessage.Method(Method);
 
-        if (Method <> 'GET') and (ContentLength > 0) then begin
-            HttpRequestMessage.Content(Content);
-            Content.GetHeaders(Headers);
-            if Headers.Contains('Content-Type') then
-                Headers.Remove('Content-Type');
-            Headers.Add('Content-Type', 'application/json');
-            if Headers.Contains('Content-Length') then
-                Headers.Remove('Content-Length');
-            Headers.Add('Content-Length', Format(ContentLength));
+        if NewRequestHeaders.Keys().Count() > 0 then begin
+            HttpRequestMessage.GetHeaders(RequestHeaders);
+            foreach HeaderKey in NewRequestHeaders.Keys() do begin
+                if RequestHeaders.Contains(HeaderKey) then
+                    RequestHeaders.Remove(HeaderKey);
+                RequestHeaders.GetValues(HeaderKey, Values);
+                RequestHeaders.Add(HeaderKey, Values.Get(1));
+            end;
         end;
 
+        if ContentLength > 0 then begin
+            HttpRequestMessage.Content(Content);
+            if NewContentHeaders.Keys().Count() > 0 then begin
+                Content.GetHeaders(ContentHeaders);
+                foreach HeaderKey in NewContentHeaders.Keys() do begin
+                    if ContentHeaders.Contains(HeaderKey) then
+                        ContentHeaders.Remove(HeaderKey);
+                    ContentHeaders.GetValues(HeaderKey, Values);
+                    ContentHeaders.Add(HeaderKey, Values.Get(1));
+                end;
+            end;
+            if ContentHeaders.Contains('Content-Length') then
+                ContentHeaders.Remove('Content-Length');
+            ContentHeaders.Add('Content-Length', Format(ContentLength));
+        end;
 
         if not HttpClient.Send(HttpRequestMessage, HttpResponseMessage) then begin
             ResponseText := StrSubstNo(UnableToSendRequestMsg, GetLastErrorText());
@@ -115,7 +160,12 @@ codeunit 79990 "BAAPI REST API Mgt."
         end;
 
         HttpResponseMessage.Content().ReadAs(ResponseText);
-        exit(HttpResponseMessage.IsSuccessStatusCode());
+        if not HttpResponseMessage.IsSuccessStatusCode() then begin
+            if ResponseText = '' then
+                ResponseText := StrSubstNo('%1 - %2', HttpResponseMessage.HttpStatusCode(), HttpResponseMessage.ReasonPhrase());
+            exit(false);
+        end;
+        exit(true);
     end;
 
 

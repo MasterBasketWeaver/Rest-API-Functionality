@@ -74,4 +74,18 @@ codeunit 79991 "BAAPI Json Mgt."
             exit;
         Result := V.AsDateTime();
     end;
+
+
+    procedure GetJsonValueAsBoolean(var JsonObj: JsonObject; KeyName: Text): Boolean
+    var
+        T: JsonToken;
+        V: JsonValue;
+    begin
+        if not JsonObj.Get(KeyName, T) then
+            exit(false);
+        V := T.AsValue();
+        if V.IsNull() or V.IsUndefined() then
+            exit(false);
+        exit(V.AsBoolean());
+    end;
 }
