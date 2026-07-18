@@ -11,25 +11,64 @@ codeunit 79990 "BAAPI REST API Mgt."
 
     procedure GetResponseAsJsonToken(Method: Text; URL: Text; TokenName: Text; JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Variant
     var
-        ResponseText: Text;
-        JsonObj: JsonObject;
+        ResponseObj: JsonObject;
         JsonTkn: JsonToken;
-        Sent: Boolean;
+        ErrorText, ResponseText : Text;
     begin
-        if JsonBody.Keys.Count() > 0 then
-            Sent := SendRequestWithJsonBody(Method, URL, JsonBody, ResponseText, RequestHeaders, ContentHeaders)
-        else
-            Sent := SendRequest(Method, URL, ResponseText, RequestHeaders, ContentHeaders);
-        if not Sent then
-            Error(ResponseText);
-        JsonObj.ReadFrom(ResponseText);
-        if not JsonObj.Get(TokenName, JsonTkn) then begin
-            JsonObj.WriteTo(ResponseText);
-            // if ResponseText.Contains('"result":"error"') then
-            //     Error(ResponseText);
-            Error(TokenMisserErr, TokenName, ResponseText);
-        end;
+        if not TryGetResponseAsJsonToken(Method, URL, TokenName, JsonBody, RequestHeaders, ContentHeaders, JsonTkn, ResponseObj, ResponseText, ErrorText) then
+            Error(ErrorText);
         exit(JsonTkn);
+    end;
+
+    /// <summary>
+    /// Non-throwing overload. Returns false and populates ErrorText instead of raising an error,
+    /// so the caller can log or otherwise handle the failure. ResponseText holds the raw response
+    /// body on both success and failure; ResponseObj holds the full parsed response.
+    /// </summary>
+    procedure TryGetResponseAsJsonToken(Method: Text; URL: Text; TokenName: Text; JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders; var JsonTkn: JsonToken; var ResponseObj: JsonObject; var ResponseText: Text; var ErrorText: Text): Boolean
+    var
+        TokenText: Text;
+    begin
+        Clear(JsonTkn);
+        if not TrySendAndParse(Method, URL, JsonBody, RequestHeaders, ContentHeaders, ResponseObj, ResponseText, ErrorText) then
+            exit(false);
+        if not ResponseObj.Get(TokenName, JsonTkn) then begin
+            ResponseObj.WriteTo(TokenText);
+            ErrorText := StrSubstNo(TokenMisserErr, TokenName, TokenText);
+            exit(false);
+        end;
+        exit(true);
+    end;
+
+
+    /// <summary>
+    /// Returns the complete response body as a JsonObject, for endpoints whose payload is not
+    /// wrapped in a named token. Raises an error on failure.
+    /// </summary>
+    procedure GetResponseAsJsonObject(Method: Text; URL: Text; var JsonBody: JsonObject): Variant
+    var
+        RequestHeaders: HttpHeaders;
+        ContentHeaders: HttpHeaders;
+    begin
+        exit(GetResponseAsJsonObject(Method, URL, JsonBody, RequestHeaders, ContentHeaders));
+    end;
+
+    procedure GetResponseAsJsonObject(Method: Text; URL: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Variant
+    var
+        ResponseObj: JsonObject;
+        ErrorText, ResponseText : Text;
+    begin
+        if not TryGetResponseAsJsonObject(Method, URL, JsonBody, RequestHeaders, ContentHeaders, ResponseObj, ResponseText, ErrorText) then
+            Error(ErrorText);
+        exit(ResponseObj);
+    end;
+
+    /// <summary>
+    /// Non-throwing overload of GetResponseAsJsonObject. See TryGetResponseAsJsonToken.
+    /// </summary>
+    procedure TryGetResponseAsJsonObject(Method: Text; URL: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders; var ResponseObj: JsonObject; var ResponseText: Text; var ErrorText: Text): Boolean
+    begin
+        exit(TrySendAndParse(Method, URL, JsonBody, RequestHeaders, ContentHeaders, ResponseObj, ResponseText, ErrorText));
     end;
 
 
@@ -57,28 +96,64 @@ codeunit 79990 "BAAPI REST API Mgt."
 
     procedure GetResponseAsJsonArray(URL: Text; TokenName: Text; Method: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders): Variant
     var
-        ResponseText: Text;
-        JsonObj: JsonObject;
+        ResponseObj: JsonObject;
         JsonArry: JsonArray;
-        JsonTkn: JsonToken;
-        Result, Sent : Boolean;
+        ErrorText, ResponseText : Text;
     begin
+        if not TryGetResponseAsJsonArray(Method, URL, TokenName, JsonBody, RequestHeaders, ContentHeaders, JsonArry, ResponseObj, ResponseText, ErrorText) then
+            Error(ErrorText);
+        exit(JsonArry);
+    end;
+
+    /// <summary>
+    /// Non-throwing overload. Returns false and populates ErrorText instead of raising an error,
+    /// so the caller can log or otherwise handle the failure. ResponseText holds the raw response
+    /// body on both success and failure; ResponseObj holds the full parsed response.
+    /// </summary>
+    procedure TryGetResponseAsJsonArray(Method: Text; URL: Text; TokenName: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders; var JsonArry: JsonArray; var ResponseObj: JsonObject; var ResponseText: Text; var ErrorText: Text): Boolean
+    var
+        JsonTkn: JsonToken;
+        TokenText: Text;
+    begin
+        Clear(JsonArry);
+        if not TrySendAndParse(Method, URL, JsonBody, RequestHeaders, ContentHeaders, ResponseObj, ResponseText, ErrorText) then
+            exit(false);
+        if not ResponseObj.Get(TokenName, JsonTkn) then begin
+            ResponseObj.WriteTo(TokenText);
+            if TokenText.Contains('"result":"error"') then
+                ErrorText := TokenText
+            else
+                ErrorText := StrSubstNo(TokenMisserErr, TokenName, TokenText);
+            exit(false);
+        end;
+        JsonArry := JsonTkn.AsArray();
+        exit(true);
+    end;
+
+
+    /// <summary>
+    /// Shared send-and-parse core. Never raises; reports failure through ErrorText.
+    /// </summary>
+    local procedure TrySendAndParse(Method: Text; URL: Text; var JsonBody: JsonObject; var RequestHeaders: HttpHeaders; var ContentHeaders: HttpHeaders; var ResponseObj: JsonObject; var ResponseText: Text; var ErrorText: Text): Boolean
+    var
+        Sent: Boolean;
+    begin
+        Clear(ResponseObj);
+        ErrorText := '';
+        ResponseText := '';
         if JsonBody.Keys.Count() > 0 then
             Sent := SendRequestWithJsonBody(Method, URL, JsonBody, ResponseText, RequestHeaders, ContentHeaders)
         else
             Sent := SendRequest(Method, URL, ResponseText, RequestHeaders, ContentHeaders);
-        if not Sent then
-            Error(ResponseText);
-
-        JsonObj.ReadFrom(ResponseText);
-        if not JsonObj.Get(TokenName, JsonTkn) then begin
-            JsonObj.WriteTo(ResponseText);
-            if ResponseText.Contains('"result":"error"') then
-                Error(ResponseText);
-            Error(TokenMisserErr, TokenName, ResponseText);
+        if not Sent then begin
+            ErrorText := ResponseText;
+            exit(false);
         end;
-        JsonArry := JsonTkn.AsArray();
-        exit(JsonArry);
+        if not ResponseObj.ReadFrom(ResponseText) then begin
+            ErrorText := StrSubstNo(UnableToReadResponseErr, ResponseText);
+            exit(false);
+        end;
+        exit(true);
     end;
 
     local procedure SendRequestWithJsonBody(Method: Text; URL: Text; var JsonObj: JsonObject; var ResponseText: Text): Boolean
@@ -171,5 +246,6 @@ codeunit 79990 "BAAPI REST API Mgt."
 
     var
         TokenMisserErr: Label 'Token %1 not found in response:\%2', Comment = '%1 = Token Name, %2 = Response Text';
+        UnableToReadResponseErr: Label 'Unable to read response:\%1', Comment = '%1 = Response Text';
         UnableToSendRequestMsg: Label 'Unable to send request:\%1', Comment = '%1 = Error Text';
 }
