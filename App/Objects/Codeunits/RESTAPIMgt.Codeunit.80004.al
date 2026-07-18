@@ -214,19 +214,22 @@ codeunit 79990 "BAAPI REST API Mgt."
         end;
 
         if ContentLength > 0 then begin
-            HttpRequestMessage.Content(Content);
-            if NewContentHeaders.Keys().Count() > 0 then begin
-                Content.GetHeaders(ContentHeaders);
-                foreach HeaderKey in NewContentHeaders.Keys() do begin
-                    if ContentHeaders.Contains(HeaderKey) then
-                        ContentHeaders.Remove(HeaderKey);
-                    NewContentHeaders.GetValues(HeaderKey, Values);
-                    ContentHeaders.Add(HeaderKey, Values.Get(1));
-                end;
+            // Content headers must be set before the content is assigned to the request
+            // message: assigning copies the content, so any header added afterwards is
+            // dropped and the request goes out as text/plain.
+            // bound unconditionally: Content-Length below is also a content header, so
+            // ContentHeaders must be attached to the content even when no headers were passed in
+            Content.GetHeaders(ContentHeaders);
+            foreach HeaderKey in NewContentHeaders.Keys() do begin
+                if ContentHeaders.Contains(HeaderKey) then
+                    ContentHeaders.Remove(HeaderKey);
+                NewContentHeaders.GetValues(HeaderKey, Values);
+                ContentHeaders.Add(HeaderKey, Values.Get(1));
             end;
             if ContentHeaders.Contains('Content-Length') then
                 ContentHeaders.Remove('Content-Length');
             ContentHeaders.Add('Content-Length', Format(ContentLength));
+            HttpRequestMessage.Content(Content);
         end;
 
         if not HttpClient.Send(HttpRequestMessage, HttpResponseMessage) then begin
